@@ -50,25 +50,26 @@ private:
     {
         window.emplace_back(this->get_clock()->now());
 
-        if(window.size() >= windowSize)
+        std::chrono::time_point<std::chrono::steady_clock> currentTime = std::chrono::steady_clock::now();
+        if(window.size() >= windowSize && std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastStatTime).count() >= 1000)
         {
-            while(window.size() > windowSize)
-            {
-                window.pop_front();
-            }
-            double averageDelay = 0;
+            double delaySum = 0;
             for(auto it = ++window.begin(); it != window.end(); ++it)
             {
-                averageDelay += it->seconds() - std::prev(it)->seconds();
+                delaySum += it->seconds() - std::prev(it)->seconds();
             }
-            averageDelay /= window.size() - 1;
-            RCLCPP_INFO(this->get_logger(), "Average rate: %.2f Hz", 1.0 / averageDelay);
+            double averageRate = (window.size() - 1) / delaySum;
+            window.clear();
+
+            RCLCPP_INFO(this->get_logger(), "Average rate: %.2f Hz", averageRate);
+            lastStatTime = currentTime;
         }
     }
 
     int windowSize;
     std::list<rclcpp::Time> window;
     rclcpp::GenericSubscription::SharedPtr subscription;
+    std::chrono::time_point<std::chrono::steady_clock> lastStatTime;
 };
 
 int main(int argc, char** argv)
