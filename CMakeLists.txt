@@ -15,7 +15,13 @@ ament_target_dependencies(waiting_node
   std_msgs
 )
 
-install(TARGETS waiting_node
+add_executable(topic_hz src/topic_hz.cpp)
+ament_target_dependencies(topic_hz
+  rclcpp
+  std_msgs
+)
+
+install(TARGETS waiting_node topic_hz
   DESTINATION lib/${PROJECT_NAME}
 )
 
