@@ -40,6 +40,8 @@ public:
             exit(1);
         }
 
+        firstMessage = true;
+
         std::string topicType = topicNamesAndTypes[topicName][0];
         rclcpp::QoS qos = this->get_publishers_info_by_topic(topicName)[0].qos_profile();
         subscription = this->create_generic_subscription(topicName, topicType, qos.keep_last(1), std::bind(&TopicHzNode::subscriptionCallback, this, std::placeholders::_1));
@@ -48,18 +50,28 @@ public:
 private:
     void subscriptionCallback(std::shared_ptr<rclcpp::SerializedMessage> msg)
     {
+        if(firstMessage)
+        {
+            firstMessage = false;
+            return; // skip first message
+        }
+
         window.emplace_back(this->get_clock()->now());
 
         std::chrono::time_point<std::chrono::steady_clock> currentTime = std::chrono::steady_clock::now();
-        if(window.size() >= windowSize && std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastStatTime).count() >= 1000)
+        if(window.size() >= 2 && std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastStatTime).count() >= 1000)
         {
+            while(window.size() > windowSize)
+            {
+                window.pop_front();
+            }
+
             double delaySum = 0;
             for(auto it = ++window.begin(); it != window.end(); ++it)
             {
                 delaySum += it->seconds() - std::prev(it)->seconds();
             }
             double averageRate = (window.size() - 1) / delaySum;
-            window.clear();
 
             RCLCPP_INFO(this->get_logger(), "Average rate: %.2f Hz", averageRate);
             lastStatTime = currentTime;
@@ -70,6 +82,7 @@ private:
     std::list<rclcpp::Time> window;
     rclcpp::GenericSubscription::SharedPtr subscription;
     std::chrono::time_point<std::chrono::steady_clock> lastStatTime;
+    bool firstMessage;
 };
 
 int main(int argc, char** argv)
