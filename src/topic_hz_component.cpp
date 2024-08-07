@@ -1,0 +1,89 @@
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp_components/register_node_macro.hpp>
+
+class TopicHzNode : public rclcpp::Node
+{
+public:
+    TopicHzNode(const rclcpp::NodeOptions & options):
+            Node("topic_hz_node", options)
+    {
+        this->declare_parameter<int>("window_size", 10);
+        windowSize = this->get_parameter("window_size").as_int();
+        if(windowSize <= 1)
+        {
+            RCLCPP_FATAL(this->get_logger(), "Invalid window_size, exiting...");
+            exit(1);
+        }
+
+        this->declare_parameter<std::string>("topic_name", "");
+        std::string topicName = this->get_parameter("topic_name").as_string();
+        if(topicName.empty())
+        {
+            RCLCPP_FATAL(this->get_logger(), "The topic_name argument was not provided, exiting...");
+            exit(1);
+        }
+        if(topicName[0] != '/')
+        {
+            topicName = "/" + topicName;
+        }
+
+        std::map<std::string, std::vector<std::string>> topicNamesAndTypes;
+        bool topicFound = false;
+        std::chrono::time_point<std::chrono::steady_clock> startTime = std::chrono::steady_clock::now();
+        while(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - startTime).count() < 5 && !topicFound)
+        {
+            topicNamesAndTypes = this->get_topic_names_and_types();
+            topicFound = topicNamesAndTypes.count(topicName) != 0 && !this->get_publishers_info_by_topic(topicName).empty();
+        }
+        if(!topicFound)
+        {
+            RCLCPP_FATAL_STREAM(this->get_logger(), "Cannot find requested topic.");
+            exit(1);
+        }
+
+        firstMessage = true;
+
+        std::string topicType = topicNamesAndTypes[topicName][0];
+        rclcpp::QoS qos = this->get_publishers_info_by_topic(topicName)[0].qos_profile();
+        subscription = this->create_generic_subscription(topicName, topicType, qos.keep_last(1), std::bind(&TopicHzNode::subscriptionCallback, this, std::placeholders::_1));
+    }
+
+private:
+    void subscriptionCallback(std::shared_ptr<rclcpp::SerializedMessage> msg)
+    {
+        if(firstMessage)
+        {
+            firstMessage = false;
+            return; // skip first message
+        }
+
+        window.emplace_back(this->get_clock()->now());
+
+        std::chrono::time_point<std::chrono::steady_clock> currentTime = std::chrono::steady_clock::now();
+        if(window.size() >= 2 && std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastStatTime).count() >= 1000)
+        {
+            while(window.size() > windowSize)
+            {
+                window.pop_front();
+            }
+
+            double delaySum = 0;
+            for(auto it = ++window.begin(); it != window.end(); ++it)
+            {
+                delaySum += it->seconds() - std::prev(it)->seconds();
+            }
+            double averageRate = (window.size() - 1) / delaySum;
+
+            RCLCPP_INFO(this->get_logger(), "Average rate: %.2f Hz", averageRate);
+            lastStatTime = currentTime;
+        }
+    }
+
+    int windowSize;
+    std::list<rclcpp::Time> window;
+    rclcpp::GenericSubscription::SharedPtr subscription;
+    std::chrono::time_point<std::chrono::steady_clock> lastStatTime;
+    bool firstMessage;
+};
+
+RCLCPP_COMPONENTS_REGISTER_NODE(TopicHzNode)
